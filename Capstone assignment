@@ -1,0 +1,227 @@
+import itertools
+import heapq
+import time
+from itertools import permutations
+from functools import lru_cache
+
+import matplotlib.pyplot as plt
+import networkx as nx
+
+
+
+locations = ["Warehouse", "C1", "C2", "C3"]
+
+distance_matrix = [
+    [0, 4, 8, 6],
+    [4, 0, 5, 7],
+    [8, 5, 0, 3],
+    [6, 7, 3, 0],
+]
+
+parcels = {
+    "C1": {"value": 50, "time": (9, 12), "weight": 10},
+    "C2": {"value": 60, "time": (10, 13), "weight": 20},
+    "C3": {"value": 40, "time": (11, 14), "weight": 15},
+}
+
+vehicle_capacity = 30
+
+
+@lru_cache(None)
+def delivery_cost(current, visited):
+    visited = frozenset(visited)
+
+    # Base Case: all customers visited → return to warehouse
+    if len(visited) == len(locations) - 1:
+        return distance_matrix[current][0]
+
+    best = float("inf")
+    for nxt in range(1, len(locations)):
+        if nxt not in visited:
+            cost_here = distance_matrix[current][nxt] + delivery_cost(
+                nxt, visited | {nxt}
+            )
+            best = min(best, cost_here)
+
+    return best
+
+
+
+# Greedy based on value/weight ratio
+def greedy_parcel_selection(parcels, capacity):
+    items = []
+    for cid, p in parcels.items():
+        ratio = p["value"] / p["weight"]
+        items.append((ratio, cid))
+
+    items.sort(reverse=True)
+
+    selected = []
+    total_weight = 0
+
+    for ratio, cid in items:
+        if total_weight + parcels[cid]["weight"] <= capacity:
+            selected.append(cid)
+            total_weight += parcels[cid]["weight"]
+
+    return selected
+
+
+# DP-like time-window feasibility check
+def check_time_window_sequence(route, parcels, start_time=9):
+    t = start_time
+    for loc in route:
+        if loc == "Warehouse":
+            continue
+        earliest, latest = parcels[loc]["time"]
+        if not (earliest <= t <= latest):
+            return False
+        t += 1
+    return True
+
+
+def dijkstra(start):
+    n = len(locations)
+    dist = [float("inf")] * n
+    dist[start] = 0
+
+    pq = [(0, start)]
+
+    while pq:
+        d, u = heapq.heappop(pq)
+
+        for v in range(n):
+            w = distance_matrix[u][v]
+            if d + w < dist[v]:
+                dist[v] = d + w
+                heapq.heappush(pq, (dist[v], v))
+
+    return dist
+
+
+def prim_mst():
+    n = len(locations)
+    selected = [False] * n
+    selected[0] = True
+
+    edges = []
+    total_cost = 0
+
+    for _ in range(n - 1):
+        best = (float("inf"), None, None)
+
+        for u in range(n):
+            if selected[u]:
+                for v in range(n):
+                    if not selected[v] and distance_matrix[u][v] < best[0]:
+                        best = (distance_matrix[u][v], u, v)
+
+        cost, u, v = best
+        selected[v] = True
+        total_cost += cost
+        edges.append((locations[u], locations[v], cost))
+
+    return edges, total_cost
+
+
+
+def tsp_brute_force(locations, distance_matrix):
+    n = len(locations)
+    indices = list(range(1, n))  # exclude warehouse
+
+    min_cost = float("inf")
+    best_route = []
+
+    for perm in permutations(indices):
+        cost = distance_matrix[0][perm[0]]
+        for i in range(len(perm) - 1):
+            cost += distance_matrix[perm[i]][perm[i + 1]]
+        cost += distance_matrix[perm[-1]][0]  # return to warehouse
+
+        if cost < min_cost:
+            min_cost = cost
+            best_route = perm
+
+    final_route = [locations[0]] + [locations[i] for i in best_route] + [locations[0]]
+    return final_route, min_cost
+
+
+
+def profile_tsp():
+    sizes = [3, 4, 5, 6]
+    times = []
+
+    for k in sizes:
+        locs = ["W"] + [f"C{i}" for i in range(1, k + 1)]
+        dm = [[0 if i == j else 1 for j in range(k + 1)] for i in range(k + 1)]
+
+        start = time.perf_counter()
+        tsp_brute_force(locs, dm)
+        end = time.perf_counter()
+
+        times.append(end - start)
+
+    return sizes, times
+
+
+
+
+def plot_graph(locations, distance_matrix, route):
+    G = nx.Graph()
+
+    # Add weighted edges
+    for i in range(len(locations)):
+        for j in range(i + 1, len(locations)):
+            G.add_edge(locations[i], locations[j], weight=distance_matrix[i][j])
+
+    pos = nx.spring_layout(G, seed=42)
+
+    # Base graph
+    nx.draw(G, pos, with_labels=True, node_size=1200, node_color="skyblue")
+    nx.draw_networkx_edge_labels(
+        G, pos, edge_labels=nx.get_edge_attributes(G, "weight")
+    )
+
+    # Highlight route
+    path_edges = list(zip(route, route[1:]))
+    nx.draw_networkx_edges(G, pos, edgelist=path_edges, edge_color="red", width=3)
+
+    plt.title("Delivery Route")
+    plt.show()
+
+
+
+if __name__ == "__main__":
+
+    print("\n========== GREEDY PARCEL SELECTION ==========")
+    selected = greedy_parcel_selection(parcels, vehicle_capacity)
+    print("Selected Parcels:", selected)
+
+    print("\n========== DIJKSTRA SHORTEST TIMES ==========")
+    dists = dijkstra(0)
+    print("Shortest travel times:", dists)
+
+    print("\n========== MST (PRIM'S) ==========")
+    edges, mst_cost = prim_mst()
+    print("MST Edges:", edges)
+    print("Total MST Cost:", mst_cost)
+
+    print("\n========== TSP OPTIMAL ROUTE ==========")
+    route, cost = tsp_brute_force(locations, distance_matrix)
+    print("Optimal Route:", route)
+    print("Total Distance:", cost)
+
+    print("\n========== TIME WINDOW CHECK ==========")
+    feasible = check_time_window_sequence(route, parcels)
+    print("Route Feasible?", feasible)
+
+    print("\n========== RECURSIVE COST (Held-Karp Style) ==========")
+    print("Minimal recursive cost:", delivery_cost(0, frozenset()))
+
+    print("\n========== PROFILING TSP ==========")
+    sizes, times = profile_tsp()
+    print("Sizes:", sizes)
+    print("Times:", times)
+
+    print("\n========== PLOTTING ROUTE ==========")
+    plot_graph(locations, distance_matrix, route)
